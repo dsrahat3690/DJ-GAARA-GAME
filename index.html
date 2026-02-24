@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Platformer Trap System Updated</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#111;overflow:hidden;user-select:none;touch-action:none;}
+canvas{display:block;width:100%;height:100%;}
+.controls{position:fixed;width:100%;height:auto;bottom:10px;pointer-events:none;}
+.left-controls,.right-controls{position:absolute;bottom:10px;pointer-events:auto;}
+.left-controls{left:10px;display:flex;flex-direction:column;gap:15px;}
+.right-controls{right:10px;display:flex;flex-direction:row;gap:15px;}
+.btn{width:80px;height:80px;border-radius:50%;background:rgba(255,165,0,0.2);border:2px solid #f79f3e;color:#fff;font-size:28px;font-weight:bold;text-align:center;line-height:76px;user-select:none;}
+#reset{position:absolute;top:10px;left:10px;opacity:0.3;pointer-events:none;width:60px;height:60px;line-height:56px;font-size:24px;}
+@media (orientation:portrait){
+body::before{content:"📱 Rotate device to landscape!";color:#f79f3e;font-size:24px;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);}
+canvas,.controls{display:none!important;}
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div class="controls">
+  <div class="left-controls">
+    <div class="btn" id="jump">⭡</div>
+  </div>
+  <div class="right-controls">
+    <div class="btn" id="back">←</div>
+    <div class="btn" id="forward">→</div>
+  </div>
+  <div class="btn" id="reset">⟳</div>
+</div>
+
+<script>
+// Canvas
+const canvas=document.getElementById("gameCanvas");
+const ctx=canvas.getContext("2d");
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
+resize(); window.addEventListener("resize",resize);
+
+// Keys / touch
+let keys={};
+const btns={forward:"forward",back:"back",jump:"jump",reset:"reset"};
+for(const [name,id] of Object.entries(btns)){
+  const el=document.getElementById(id);
+  el.addEventListener("touchstart",()=>keys[name]=true);
+  el.addEventListener("touchend",()=>keys[name]=false);
+}
+
+// Player
+const player={x:100,y:0,w:25,h:40,vy:0,speed:5,jumpForce:12,grounded:false,frame:0,frameDir:1};
+
+// Floor/Ceiling
+let groundHeight=80, ceilingHeight=80;
+
+// Obstacles
+let obstacles=[],gameOver=false,win=false,totalObstacles=50,gameTime=0;
+
+// Background layers
+const bgLayers=[{speed:0.1,color1:"#111",color2:"#222"},{speed:0.3,color1:"#222",color2:"#333"},{speed:0.6,color1:"#333",color2:"#444"}];
+
+// Particles
+let particles=[],trails=[];
+
+// Sounds
+const jumpSound=new Audio('https://freesound.org/data/previews/331/331912_3248244-lq.mp3');
+const hitSound=new Audio('https://freesound.org/data/previews/331/331912_3248244-lq.mp3');
+const winSound=new Audio('https://freesound.org/data/previews/331/331912_3248244-lq.mp3');
+
+// Reset
+function resetGame(){
+  player.x=100; player.y=canvas.height-groundHeight-player.h; player.vy=0; player.grounded=false; player.frame=0;
+  obstacles=[]; gameOver=false; win=false; gameTime=0; particles=[]; trails=[];
+  const resetBtn=document.getElementById("reset"); resetBtn.style.opacity=0.3; resetBtn.style.pointerEvents="none";
+
+  let xPos=400;
+  for(let i=0;i<totalObstacles;i++){
+    const rand=Math.random();
+    let type="normal"; // floor block
+    if(rand<0.2) type="trap"; // spikes
+    else if(rand<0.3) type="gap"; // hollow
+    const size=40+Math.random()*30;
+    const y=canvas.height-groundHeight-size;
+    obstacles.push({x:xPos,y:y,w:size,h:size,type:type,colorOffset:0});
+    xPos+=200+Math.random()*200;
+  }
+}
+
+// Particle system
+function spawnParticle(x,y,color,vy,life){particles.push({x,y,vx:(Math.random()-0.5)*2,vy,color,life});}
+function updateParticles(){
+  particles.forEach(p=>{p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life-=1;});
+  particles=particles.filter(p=>p.life>0);
+  trails.forEach(t=>{t.life-=1;}); trails=trails.filter(t=>t.life>0);
+}
+function drawParticles(){
+  particles.forEach(p=>{ctx.fillStyle=p.color; ctx.fillRect(p.x,p.y,3,3);});
+  trails.forEach(t=>{ctx.fillStyle=t.color; ctx.globalAlpha=t.life/20; ctx.fillRect(t.x,t.y,player.w,player.h); ctx.globalAlpha=1;});
+}
+
+// Update
+function update(){
+  if(gameOver||win) return;
+  gameTime++;
+  const difficultyMultiplier=1+gameTime/4000;
+
+  // Movement
+  let moving=false;
+  if(keys.forward){ player.x+=player.speed*difficultyMultiplier; moving=true; }
+  if(keys.back){ player.x-=player.speed*difficultyMultiplier; moving=true; }
+  if(keys.jump && player.grounded){ player.vy=-player.jumpForce*difficultyMultiplier; player.grounded=false; jumpSound.play();
+    for(let i=0;i<8;i++) spawnParticle(player.x+player.w/2,player.y+player.h,"#ffa500",-Math.random()*2-1,20);
+  }
+
+  // Gravity
+  player.vy+=0.8*difficultyMultiplier; player.y+=player.vy;
+
+  // Ground / Ceiling
+  const groundY=canvas.height-groundHeight-player.h;
+  if(player.y>groundY){player.y=groundY; player.vy=0; player.grounded=true;}
+  if(player.y<ceilingHeight){player.y=ceilingHeight; player.vy=0;}
+
+  // Camera 35%
+  const camLeft=canvas.width*0.35, camRight=canvas.width*0.65;
+  let dx=0;
+  if(player.x>camRight){dx=player.x-camRight; player.x=camRight;}
+  else if(player.x<camLeft){dx=player.x-camLeft; player.x=camLeft;}
+  obstacles.forEach(o=>{o.x-=dx; o.colorOffset=(o.colorOffset+0.05)%20;});
+
+  // Collisions
+  for(let o of obstacles){
+    if(o.type==="normal"){
+      if(player.x<o.x+o.w && player.x+player.w>o.x && player.y<o.y+o.h && player.y+player.h>o.y){
+        if(player.y+player.h>o.y && player.y+player.h<o.y+o.h){ player.y=o.y-player.h; player.grounded=true; player.vy=0; }
+      }
+    } else if(o.type==="trap"){
+      if(player.x<o.x+o.w && player.x+player.w>o.x && player.y<o.y+o.h && player.y+player.h>o.y){gameOver=true; hitSound.play();}
+    } else if(o.type==="gap"){
+      if(player.x+player.w>o.x && player.x<o.x+o.w && player.y+player.h>=canvas.height-groundHeight){ gameOver=true; hitSound.play(); }
+    }
+  }
+
+  // Trail generation
+  if(moving){trails.push({x:player.x,y:player.y,color:"#ffa500",life:10});}
+
+  if(player.x>obstacles[obstacles.length-1].x+200){win=true; winSound.play();}
+  if(moving && player.grounded){player.frame+=0.2*player.frameDir; if(player.frame>3||player.frame<0) player.frameDir*=-1;}
+  updateParticles();
+}
+
+// Draw
+function draw(){
+  // Background
+  bgLayers.forEach(layer=>{
+    const grad=ctx.createLinearGradient(0,0,canvas.width,canvas.height);
+    grad.addColorStop(0,layer.color1); grad.addColorStop(1,layer.color2);
+    ctx.fillStyle=grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+  });
+
+  // Ceiling & Ground
+  ctx.fillStyle="#111"; ctx.fillRect(0,0,canvas.width,ceilingHeight);
+  ctx.fillStyle="#111"; ctx.fillRect(0,canvas.height-groundHeight,canvas.width,groundHeight);
+
+  // Obstacles
+  obstacles.forEach(o=>{
+    if(o.type==="normal"){ctx.fillStyle="#222"; ctx.fillRect(o.x,o.y,o.w,o.h);}
+    else if(o.type==="trap"){
+      const triCount=5;
+      const triW=o.w/triCount;
+      const triH=player.h*0.15; // Player height এর 15%
+      ctx.fillStyle="#222"; // Floor color
+      for(let i=0;i<triCount;i++){
+        ctx.beginPath();
+        ctx.moveTo(o.x+i*triW,o.y+o.h);
+        ctx.lineTo(o.x+i*triW+triW/2,o.y+o.h-triH);
+        ctx.lineTo(o.x+(i+1)*triW,o.y+o.h);
+        ctx.closePath(); ctx.fill();
+      }
+    } else if(o.type==="gap"){ctx.fillStyle="#111"; ctx.fillRect(o.x,o.y,o.w,o.h);}
+  });
+
+  drawParticles();
+
+  // Player
+  ctx.fillStyle=player.grounded? `rgb(${247+player.frame*2},159,62)` : "#ffa500";
+  ctx.fillRect(player.x,player.y,player.w,player.h);
+
+  // Game Over / Win overlay
+  const resetBtn=document.getElementById("reset");
+  if(gameOver){
+    ctx.fillStyle="rgba(0,0,0,0.7)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#ff3333"; ctx.font="36px Arial"; ctx.fillText("💀 Game Over 💀",canvas.width/2-110,canvas.height/2);
+    resetBtn.style.opacity=1; resetBtn.style.pointerEvents="auto";
+  }
+  if(win){
+    ctx.fillStyle="rgba(0,0,0,0.7)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#00ff66"; ctx.font="36px Arial"; ctx.fillText("🏆 You Win! 🏆",canvas.width/2-100,canvas.height/2);
+    resetBtn.style.opacity=1; resetBtn.style.pointerEvents="auto";
+  }
+}
+
+// Loop
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+document.getElementById("reset").addEventListener("click",()=>{ resetGame(); });
+
+resetGame(); loop();
+</script>
+</body>
+</html>
